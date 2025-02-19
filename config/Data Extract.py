@@ -8,16 +8,19 @@
 # COMMAND ----------
 
 # MAGIC %md 
-# MAGIC Set Kaggle credential configuration values in the block below: You can set up a [secret scope](https://docs.databricks.com/security/secrets/secret-scopes.html) to manage credentials used in notebooks. For the block below, we have manually set up the `solution-accelerator-cicd` secret scope and saved our credentials there for internal testing purposes.
+# MAGIC Set Kaggle credential configuration values in the block below: You can set up a [secret scope](https://docs.databricks.com/security/secrets/secret-scopes.html) to manage credentials used in notebooks. For the block below, we have manually set up the `fine-grained-df-dev` secret scope and saved our credentials there for internal testing purposes.
 
 # COMMAND ----------
 
 import os
+
+secret_scope_name = "fine-grained-df-dev"
+
 # os.environ['kaggle_username'] = 'YOUR KAGGLE USERNAME HERE' # replace with your own credential here temporarily or set up a secret scope with your credential
-os.environ['kaggle_username'] = dbutils.secrets.get("solution-accelerator-cicd", "kaggle_username")
+os.environ['kaggle_username'] = dbutils.secrets.get(secret_scope_name, "kaggle-username")
 
 # os.environ['kaggle_key'] = 'YOUR KAGGLE KEY HERE' # replace with your own credential here temporarily or set up a secret scope with your credential
-os.environ['kaggle_key'] = dbutils.secrets.get("solution-accelerator-cicd", "kaggle_key")
+os.environ['kaggle_key'] = dbutils.secrets.get(secret_scope_name, "kaggle-key")
 
 # COMMAND ----------
 
@@ -26,7 +29,10 @@ os.environ['kaggle_key'] = dbutils.secrets.get("solution-accelerator-cicd", "kag
 # COMMAND ----------
 
 # MAGIC %sh 
+# MAGIC
+# MAGIC # The /databricks/driver directory is typically used to store files that are accessible to the driver node in a Databricks cluster. This is a good place to download and unzip files that will be used in Databricks notebooks.
 # MAGIC cd /databricks/driver
+# MAGIC
 # MAGIC export KAGGLE_USERNAME=$kaggle_username
 # MAGIC export KAGGLE_KEY=$kaggle_key
 # MAGIC kaggle competitions download -c demand-forecasting-kernels-only
@@ -34,25 +40,16 @@ os.environ['kaggle_key'] = dbutils.secrets.get("solution-accelerator-cicd", "kag
 
 # COMMAND ----------
 
-# MAGIC %md Move the downloaded data to the folder used throughout the accelerator:
+# MAGIC %md Move the downloaded data to the landing folder used throughout the accelerator:
 
 # COMMAND ----------
 
-dbutils.fs.mv("file:/databricks/driver/train.csv", "dbfs:/tmp/solacc/demand_forecast/train/train.csv")
+from databricks import sdk
 
-# COMMAND ----------
+local_path = "/databricks/driver/train.csv"
+volume_path = "/Volumes/fine_grained_df_dev/landing/kaggle/train.csv"
 
-# DBTITLE 1,Set up user-scoped database location to avoid conflicts
-import re
-from pathlib import Path
-# Creating user-specific paths and database names
-useremail = dbutils.notebook.entry_point.getDbutils().notebook().getContext().userName().get()
-username_sql_compatible = re.sub('\W', '_', useremail.split('@')[0])
-tmp_data_path = f"/tmp/fine_grain_forecast/data/{useremail}/"
-database_name = f"fine_grain_forecast_{username_sql_compatible}"
-
-# Create user-scoped environment
-spark.sql(f"DROP DATABASE IF EXISTS {database_name} CASCADE")
-spark.sql(f"CREATE DATABASE {database_name} LOCATION '{tmp_data_path}'")
-spark.sql(f"USE {database_name}")
-Path(tmp_data_path).mkdir(parents=True, exist_ok=True)
+workspace_client = sdk.WorkspaceClient()
+with open(local_path, 'rb') as file:
+    data = file.read()
+    workspace_client.files.upload(volume_path, data)
