@@ -1,4 +1,11 @@
 # Fine-grained Demand Forecasting
+
+:warning: **This is a customized approach to the accelerator, adapted for the Medallion Architecture and Unity Catalog. You can find the related infrastructure provisioning code at [github.com/ricardolsmendes/fine-grained-demand-forecasting-infra](https://github.com/ricardolsmendes/fine-grained-demand-forecasting-infra).**
+
+_P.S.: Content below this line comes from the official accelerator code._
+
+---
+
 <img src="https://www.databricks.com/wp-content/uploads/2022/03/build-fine-grained-demand-forecasts-ui-hex.png">
 
 https://www.databricks.com/solutions/accelerators/demand-forecasting
