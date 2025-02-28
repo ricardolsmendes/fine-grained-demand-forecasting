@@ -47,6 +47,6 @@ os.environ["KAGGLE_KEY"] = dbutils.secrets.get(secret_scope, "kaggle-key")
 downloaded_file_path = "/databricks/driver/train.csv"
 
 catalog = "fine_grained_df_dev"
-landing_file_path = f"/Volumes/{catalog}/landing/storage/kaggle/train.csv"
+landing_file_path = f"/Volumes/{catalog}/landing/blob_storage/kaggle/train.csv"
 
 dbutils.fs.cp(f"file:{downloaded_file_path}", landing_file_path)

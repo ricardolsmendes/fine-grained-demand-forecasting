@@ -44,7 +44,7 @@ from sklearn import metrics
 
 # constant values
 catalog = "fine_grained_df_dev"
-landing_file_path = f"/Volumes/{catalog}/landing/storage/kaggle/train.csv"
+landing_file_path = f"/Volumes/{catalog}/landing/blob_storage/kaggle/train.csv"
 bronze_table = f"{catalog}.bronze.kaggle_train"
 silver_table = f"{catalog}.silver.store_item_history"
 
