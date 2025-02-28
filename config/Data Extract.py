@@ -14,13 +14,13 @@
 
 import os
 
-secret_scope_name = "fine-grained-df-dev"
+secret_scope = "fine-grained-df-dev"
 
-# os.environ['kaggle_username'] = 'YOUR KAGGLE USERNAME HERE' # replace with your own credential here temporarily or set up a secret scope with your credential
-os.environ['kaggle_username'] = dbutils.secrets.get(secret_scope_name, "kaggle-username")
+# os.environ["KAGGLE_USERNAME"] = "YOUR KAGGLE USERNAME HERE" # replace with your own credential here temporarily or set up a secret scope with your credential
+os.environ["KAGGLE_USERNAME"] = dbutils.secrets.get(secret_scope, "kaggle-username")
 
-# os.environ['kaggle_key'] = 'YOUR KAGGLE KEY HERE' # replace with your own credential here temporarily or set up a secret scope with your credential
-os.environ['kaggle_key'] = dbutils.secrets.get(secret_scope_name, "kaggle-key")
+# os.environ["KAGGLE_KEY"] = "YOUR KAGGLE KEY HERE" # replace with your own credential here temporarily or set up a secret scope with your credential
+os.environ["KAGGLE_KEY"] = dbutils.secrets.get(secret_scope, "kaggle-key")
 
 # COMMAND ----------
 
@@ -30,11 +30,11 @@ os.environ['kaggle_key'] = dbutils.secrets.get(secret_scope_name, "kaggle-key")
 
 # MAGIC %sh 
 # MAGIC
-# MAGIC # The /databricks/driver directory is typically used to store files that are accessible to the driver node in a Databricks cluster. This is a good place to download and unzip files that will be used in Databricks notebooks.
+# MAGIC # The /databricks/driver directory is typically used to store files that are accessible to the driver node in a Databricks cluster.
+# MAGIC # This is a good place to download and unzip files that will be used in Databricks notebooks.
 # MAGIC cd /databricks/driver
 # MAGIC
-# MAGIC export KAGGLE_USERNAME=$kaggle_username
-# MAGIC export KAGGLE_KEY=$kaggle_key
+# MAGIC # The Kaggle client uses the environment variables set in the previous step to authenticate.
 # MAGIC kaggle competitions download -c demand-forecasting-kernels-only
 # MAGIC unzip -o demand-forecasting-kernels-only.zip
 
@@ -44,12 +44,9 @@ os.environ['kaggle_key'] = dbutils.secrets.get(secret_scope_name, "kaggle-key")
 
 # COMMAND ----------
 
-from databricks import sdk
+downloaded_file_path = "/databricks/driver/train.csv"
 
-local_path = "/databricks/driver/train.csv"
-volume_path = "/Volumes/fine_grained_df_dev/landing/kaggle/train.csv"
+catalog = "fine_grained_df_dev"
+landing_file_path = f"/Volumes/{catalog}/landing/blob_storage/kaggle/train.csv"
 
-workspace_client = sdk.WorkspaceClient()
-with open(local_path, 'rb') as file:
-    data = file.read()
-    workspace_client.files.upload(volume_path, data)
+dbutils.fs.cp(f"file:{downloaded_file_path}", landing_file_path)

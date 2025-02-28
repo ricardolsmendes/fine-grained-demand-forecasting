@@ -2,7 +2,12 @@
 
 :warning: **This is a customized approach to the accelerator, adapted for the Medallion Architecture and Unity Catalog. You can find the related infrastructure provisioning code at [github.com/ricardolsmendes/fine-grained-demand-forecasting-infra](https://github.com/ricardolsmendes/fine-grained-demand-forecasting-infra).**
 
-_P.S.: Content below this line comes from the official accelerator code._
+The following files were modified:
+
+1. `config/Data Extract.py`
+1. `1_Python_Fine Grained Demand Forecasting.py`
+
+_P.S.: Content below this line comes from the official accelerator repo._
 
 ---
 
