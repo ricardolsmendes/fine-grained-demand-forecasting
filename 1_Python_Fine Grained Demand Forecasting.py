@@ -31,14 +31,26 @@
 
 # COMMAND ----------
 
-# DBTITLE 1,Access the Dataset
-from pyspark.sql import types
-import shutil
+# DBTITLE 1,Imports and Constants
+import datetime
+import logging
+import math
 
+import pandas as pd
+import prophet
+from pyspark.sql import functions, types
+import shutil
+from sklearn import metrics
+
+# constant values
 catalog = "fine_grained_df_dev"
 landing_file_path = f"/Volumes/{catalog}/landing/storage/kaggle/train.csv"
 bronze_table = f"{catalog}.bronze.kaggle_train"
+silver_table = f"{catalog}.silver.store_item_history"
 
+# COMMAND ----------
+
+# DBTITLE 1,Ingest data from the Landing Zone (CSV) into a Bronze Table
 # structure of the training data set
 train_schema = types.StructType([
   types.StructField("date", types.DateType()),
@@ -147,10 +159,11 @@ train_df.write \
 # COMMAND ----------
 
 # DBTITLE 1,Retrieve Data for a Single Item-Store Combination
-# query to aggregate data to date (ds) level
+# Query to aggregate data to date (ds) level.
+# For prophet, the dataframe must have columns "ds" and "y" with the dates and values respectively.
 sql_statement = f"""
   SELECT
-    CAST(date as date) as ds,
+    date as ds,
     sales as y
   FROM {bronze_table}
   WHERE store = 1 AND item = 1
@@ -170,10 +183,6 @@ history_pd = history_pd.dropna()
 # COMMAND ----------
 
 # DBTITLE 1,Import Prophet Library
-import logging
-
-from prophet import Prophet
-
 # disable informational messages from prophet
 logging.getLogger("py4j").setLevel(logging.ERROR)
 
@@ -185,7 +194,7 @@ logging.getLogger("py4j").setLevel(logging.ERROR)
 
 # DBTITLE 1,Train Prophet Model
 # set model parameters
-model = Prophet(
+model = prophet.Prophet(
   interval_width=0.95,
   growth="linear",
   daily_seasonality=False,
@@ -255,14 +264,8 @@ display(predict_fig)
 # COMMAND ----------
 
 # DBTITLE 1,Calculate Evaluation metrics
-from datetime import date
-
-import math
-import pandas as pd
-from sklearn import metrics
-
 # get historical actuals & predictions for comparison
-actuals_pd = history_pd[history_pd["ds"] < date(2018, 1, 1)]["y"]
+actuals_pd = history_pd[history_pd["ds"] < datetime.date(2018, 1, 1)]["y"]
 predicted_pd = forecast_pd[forecast_pd["ds"] < pd.to_datetime("2018-01-01")]["yhat"]
 
 # calculate evaluation metrics
@@ -283,7 +286,28 @@ print("\n".join(["MAE: {0}", "MSE: {1}", "RMSE: {2}"]).format(mae, mse, rmse))
 # MAGIC
 # MAGIC With the mechanics under our belt, let's now tackle our original goal of building numerous, fine-grain models & forecasts for individual store and item combinations.  We will start by assembling sales data at the store-item-date level of granularity:
 # MAGIC
-# MAGIC **NOTE**: The data in this data set should already be aggregated at this level of granularity but we are explicitly aggregating to ensure we have the expected data structure.
+# MAGIC **NOTE**: The data in this data set should already be aggregated at this level of granularity but we are explicitly aggregating in the Silver Table to ensure we have the expected data structure.
+
+# COMMAND ----------
+
+# DBTITLE 1,Persist Data for All Store-Item Combinations in the Silver Layer
+sql_statement = f"""
+  SELECT
+    store,
+    item,
+    date,
+    SUM(sales) as sales
+  FROM {bronze_table}
+  GROUP BY store, item, date
+  ORDER BY store, item, date
+"""
+
+spark \
+  .sql(sql_statement) \
+  .write \
+  .mode("overwrite") \
+  .option("overwriteSchema", "true") \
+  .saveAsTable(silver_table)
 
 # COMMAND ----------
 
@@ -292,11 +316,9 @@ sql_statement = f"""
   SELECT
     store,
     item,
-    CAST(date as date) as ds,
-    SUM(sales) as y
-  FROM {bronze_table}
-  GROUP BY store, item, ds
-  ORDER BY store, item, ds
+    date as ds,
+    sales as y
+  FROM {silver_table}
 """
 
 store_item_history = spark \
@@ -338,7 +360,7 @@ def forecast_store_item(history_pd: pd.DataFrame) -> pd.DataFrame:
   history_pd = history_pd.dropna()
   
   # configure the model
-  model = Prophet(
+  model = prophet.Prophet(
     interval_width=0.95,
     growth="linear",
     daily_seasonality=False,
@@ -395,8 +417,6 @@ def forecast_store_item(history_pd: pd.DataFrame) -> pd.DataFrame:
 # COMMAND ----------
 
 # DBTITLE 1,Apply Forecast Function to Each Store-Item Combination
-from pyspark.sql import functions
-
 results = store_item_history \
   .groupBy("store", "item") \
   .applyInPandas(forecast_store_item, schema=result_schema) \
@@ -415,22 +435,9 @@ display(results)
 # DBTITLE 1,Persist Forecast Output
 # MAGIC %sql
 # MAGIC
-# MAGIC -- create forecast table
-# MAGIC create table if not exists forecasts (
-# MAGIC   date date,
-# MAGIC   store integer,
-# MAGIC   item integer,
-# MAGIC   sales float,
-# MAGIC   sales_predicted float,
-# MAGIC   sales_predicted_upper float,
-# MAGIC   sales_predicted_lower float,
-# MAGIC   training_date date
-# MAGIC )
-# MAGIC using delta
-# MAGIC partitioned by (date);
-# MAGIC
-# MAGIC -- load data to it
-# MAGIC merge into forecasts f
+# MAGIC -- The store_item_forecasts table is created by Terraform.
+# MAGIC -- Load data to it.
+# MAGIC merge into `fine_grained_df_dev`.`gold`.`store_item_forecasts` f
 # MAGIC using new_forecasts n 
 # MAGIC on f.date = n.ds and f.store = n.store and f.item = n.item
 # MAGIC when matched then update set f.date = n.ds,
@@ -523,18 +530,9 @@ results.createOrReplaceTempView("new_forecast_evals")
 # DBTITLE 1,Persist Evaluation Metrics
 # MAGIC %sql
 # MAGIC
-# MAGIC create table if not exists forecast_evals (
-# MAGIC   store integer,
-# MAGIC   item integer,
-# MAGIC   mae float,
-# MAGIC   mse float,
-# MAGIC   rmse float,
-# MAGIC   training_date date
-# MAGIC )
-# MAGIC using delta
-# MAGIC partitioned by (training_date);
-# MAGIC
-# MAGIC insert into forecast_evals
+# MAGIC -- The store_item_forecast_evals table is created by Terraform.
+# MAGIC -- Load data to it.
+# MAGIC insert into `fine_grained_df_dev`.`gold`.`store_item_forecast_evals`
 # MAGIC select
 # MAGIC   store,
 # MAGIC   item,
@@ -556,15 +554,16 @@ results.createOrReplaceTempView("new_forecast_evals")
 # MAGIC SELECT
 # MAGIC   store,
 # MAGIC   date,
+# MAGIC   item,
 # MAGIC   sales_predicted,
 # MAGIC   sales_predicted_upper,
 # MAGIC   sales_predicted_lower
-# MAGIC FROM forecasts a
+# MAGIC FROM `fine_grained_df_dev`.`gold`.`store_item_forecasts` a
 # MAGIC WHERE item = 1 AND
 # MAGIC       store IN (1, 2, 3) AND
 # MAGIC       date >= '2018-01-01' AND
 # MAGIC       training_date=current_date()
-# MAGIC ORDER BY store
+# MAGIC ORDER BY store, date, item
 
 # COMMAND ----------
 
@@ -580,7 +579,7 @@ results.createOrReplaceTempView("new_forecast_evals")
 # MAGIC   mae,
 # MAGIC   mse,
 # MAGIC   rmse
-# MAGIC FROM forecast_evals a
+# MAGIC FROM `fine_grained_df_dev`.`gold`.`store_item_forecast_evals` a
 # MAGIC WHERE item = 1 AND
 # MAGIC       training_date=current_date()
 # MAGIC ORDER BY store
