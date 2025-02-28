@@ -41,10 +41,10 @@ bronze_table = f"{catalog}.bronze.kaggle_train"
 
 # structure of the training data set
 train_schema = types.StructType([
-  types.StructField('date', types.DateType()),
-  types.StructField('store', types.IntegerType()),
-  types.StructField('item', types.IntegerType()),
-  types.StructField('sales', types.IntegerType())
+  types.StructField("date", types.DateType()),
+  types.StructField("store", types.IntegerType()),
+  types.StructField("item", types.IntegerType()),
+  types.StructField("sales", types.IntegerType())
 ])
 
 # read the training file into a dataframe
@@ -101,7 +101,7 @@ train_df.write \
 
 # MAGIC %md Aggregating the data at a weekday level, a pronounced weekly seasonal pattern is observed with a peak on Sunday (weekday 0), a hard drop on Monday (weekday 1), and then a steady pickup over the week heading back to the Sunday high.  This pattern seems to be pretty stable across the five years of observations:
 # MAGIC
-# MAGIC **UPDATE** As part of the Spark 3 move to the [Proleptic Gregorian calendar](https://databricks.com/blog/2020/07/22/a-comprehensive-look-at-dates-and-timestamps-in-apache-spark-3-0.html), the 'u' option in CAST(DATE_FORMAT(date, 'u') was removed. We are now using 'E to provide us a similar output.
+# MAGIC **UPDATE** As part of the Spark 3 move to the [Proleptic Gregorian calendar](https://databricks.com/blog/2020/07/22/a-comprehensive-look-at-dates-and-timestamps-in-apache-spark-3-0.html), the 'u' option in CAST(DATE_FORMAT(date, 'u') was removed. We are now using 'E' to provide us a similar output.
 
 # COMMAND ----------
 
@@ -128,7 +128,7 @@ train_df.write \
 # MAGIC     SUM(sales) as sales
 # MAGIC   FROM `fine_grained_df_dev`.`bronze`.`kaggle_train`
 # MAGIC   GROUP BY date
-# MAGIC  ) x
+# MAGIC ) x
 # MAGIC GROUP BY year, weekday
 # MAGIC ORDER BY year, weekday;
 
@@ -148,14 +148,14 @@ train_df.write \
 
 # DBTITLE 1,Retrieve Data for a Single Item-Store Combination
 # query to aggregate data to date (ds) level
-sql_statement = f'''
+sql_statement = f"""
   SELECT
     CAST(date as date) as ds,
     sales as y
   FROM {bronze_table}
-  WHERE store=1 AND item=1
+  WHERE store = 1 AND item = 1
   ORDER BY ds
-  '''
+"""
 
 # assemble dataset in Pandas dataframe
 history_pd = spark.sql(sql_statement).toPandas()
@@ -170,11 +170,12 @@ history_pd = history_pd.dropna()
 # COMMAND ----------
 
 # DBTITLE 1,Import Prophet Library
-from prophet import Prophet
 import logging
 
+from prophet import Prophet
+
 # disable informational messages from prophet
-logging.getLogger('py4j').setLevel(logging.ERROR)
+logging.getLogger("py4j").setLevel(logging.ERROR)
 
 # COMMAND ----------
 
@@ -186,12 +187,12 @@ logging.getLogger('py4j').setLevel(logging.ERROR)
 # set model parameters
 model = Prophet(
   interval_width=0.95,
-  growth='linear',
+  growth="linear",
   daily_seasonality=False,
   weekly_seasonality=True,
   yearly_seasonality=True,
-  seasonality_mode='multiplicative'
-  )
+  seasonality_mode="multiplicative"
+)
 
 # fit the model to historical data
 model.fit(history_pd)
@@ -205,8 +206,8 @@ model.fit(history_pd)
 # DBTITLE 1,Build Forecast
 # define a dataset including both historical dates & 90-days beyond the last available date
 future_pd = model.make_future_dataframe(
+  freq="d", 
   periods=90, 
-  freq='d', 
   include_history=True
 )
 
@@ -232,11 +233,11 @@ display(trends_fig)
 # COMMAND ----------
 
 # DBTITLE 1,View Historicals vs. Predictions
-predict_fig = model.plot( forecast_pd, xlabel='date', ylabel='sales')
+predict_fig = model.plot(forecast_pd, xlabel="date", ylabel="sales")
 
 # adjust figure to display dates from last year + the 90 day forecast
 xlim = predict_fig.axes[0].get_xlim()
-new_xlim = ( xlim[1]-(180.0+365.0), xlim[1]-90.0)
+new_xlim = (xlim[1] - (180.0 + 365.0), xlim[1] - 90.0)
 predict_fig.axes[0].set_xlim(new_xlim)
 
 display(predict_fig)
@@ -254,22 +255,23 @@ display(predict_fig)
 # COMMAND ----------
 
 # DBTITLE 1,Calculate Evaluation metrics
-import pandas as pd
-from sklearn.metrics import mean_squared_error, mean_absolute_error
-from math import sqrt
 from datetime import date
 
+import math
+import pandas as pd
+from sklearn import metrics
+
 # get historical actuals & predictions for comparison
-actuals_pd = history_pd[ history_pd['ds'] < date(2018, 1, 1) ]['y']
-predicted_pd = forecast_pd[ forecast_pd['ds'] < pd.to_datetime('2018-01-01') ]['yhat']
+actuals_pd = history_pd[history_pd["ds"] < date(2018, 1, 1)]["y"]
+predicted_pd = forecast_pd[forecast_pd["ds"] < pd.to_datetime("2018-01-01")]["yhat"]
 
 # calculate evaluation metrics
-mae = mean_absolute_error(actuals_pd, predicted_pd)
-mse = mean_squared_error(actuals_pd, predicted_pd)
-rmse = sqrt(mse)
+mae = metrics.mean_absolute_error(actuals_pd, predicted_pd)
+mse = metrics.mean_squared_error(actuals_pd, predicted_pd)
+rmse = math.sqrt(mse)
 
 # print metrics to the screen
-print( '\n'.join(['MAE: {0}', 'MSE: {1}', 'RMSE: {2}']).format(mae, mse, rmse) )
+print("\n".join(["MAE: {0}", "MSE: {1}", "RMSE: {2}"]).format(mae, mse, rmse))
 
 # COMMAND ----------
 
@@ -286,7 +288,7 @@ print( '\n'.join(['MAE: {0}', 'MSE: {1}', 'RMSE: {2}']).format(mae, mse, rmse) )
 # COMMAND ----------
 
 # DBTITLE 1,Retrieve Data for All Store-Item Combinations
-sql_statement = f'''
+sql_statement = f"""
   SELECT
     store,
     item,
@@ -295,13 +297,12 @@ sql_statement = f'''
   FROM {bronze_table}
   GROUP BY store, item, ds
   ORDER BY store, item, ds
-  '''
+"""
 
-store_item_history = (
-  spark
-    .sql( sql_statement )
-    .repartition(sc.defaultParallelism, ['store', 'item'])
-  ).cache()
+store_item_history = spark \
+  .sql(sql_statement) \
+  .repartition(sc.defaultParallelism, ["store", "item"]) \
+  .cache()
 
 # COMMAND ----------
 
@@ -311,13 +312,13 @@ store_item_history = (
 
 # DBTITLE 1,Define Schema for Forecast Output
 result_schema = types.StructType([
-  types.StructField('ds', types.DateType()),
-  types.StructField('store', types.IntegerType()),
-  types.StructField('item', types.IntegerType()),
-  types.StructField('y', types.FloatType()),
-  types.StructField('yhat', types.FloatType()),
-  types.StructField('yhat_upper', types.FloatType()),
-  types.StructField('yhat_lower', types.FloatType())
+  types.StructField("ds", types.DateType()),
+  types.StructField("store", types.IntegerType()),
+  types.StructField("item", types.IntegerType()),
+  types.StructField("y", types.FloatType()),
+  types.StructField("yhat", types.FloatType()),
+  types.StructField("yhat_upper", types.FloatType()),
+  types.StructField("yhat_lower", types.FloatType())
 ])
 
 # COMMAND ----------
@@ -329,7 +330,7 @@ result_schema = types.StructType([
 # COMMAND ----------
 
 # DBTITLE 1,Define Function to Train Model & Generate Forecast
-def forecast_store_item( history_pd: pd.DataFrame ) -> pd.DataFrame:
+def forecast_store_item(history_pd: pd.DataFrame) -> pd.DataFrame:
   
   # TRAIN MODEL AS BEFORE
   # --------------------------------------
@@ -339,47 +340,47 @@ def forecast_store_item( history_pd: pd.DataFrame ) -> pd.DataFrame:
   # configure the model
   model = Prophet(
     interval_width=0.95,
-    growth='linear',
+    growth="linear",
     daily_seasonality=False,
     weekly_seasonality=True,
     yearly_seasonality=True,
-    seasonality_mode='multiplicative'
-    )
+    seasonality_mode="multiplicative"
+  )
   
   # train the model
-  model.fit( history_pd )
+  model.fit(history_pd)
   # --------------------------------------
   
   # BUILD FORECAST AS BEFORE
   # --------------------------------------
   # make predictions
   future_pd = model.make_future_dataframe(
+    freq="d", 
     periods=90, 
-    freq='d', 
     include_history=True
-    )
-  forecast_pd = model.predict( future_pd )  
+  )
+  forecast_pd = model.predict(future_pd)  
   # --------------------------------------
   
   # ASSEMBLE EXPECTED RESULT SET
   # --------------------------------------
   # get relevant fields from forecast
-  f_pd = forecast_pd[ ['ds','yhat', 'yhat_upper', 'yhat_lower'] ].set_index('ds')
+  f_pd = forecast_pd[["ds", "yhat", "yhat_upper", "yhat_lower"]].set_index("ds")
   
   # get relevant fields from history
-  h_pd = history_pd[['ds','store','item','y']].set_index('ds')
+  h_pd = history_pd[["ds", "store", "item", "y"]].set_index("ds")
   
   # join history and forecast
-  results_pd = f_pd.join( h_pd, how='left' )
+  results_pd = f_pd.join(h_pd, how="left")
   results_pd.reset_index(level=0, inplace=True)
   
   # get store & item from incoming data set
-  results_pd['store'] = history_pd['store'].iloc[0]
-  results_pd['item'] = history_pd['item'].iloc[0]
+  results_pd["store"] = history_pd["store"].iloc[0]
+  results_pd["item"] = history_pd["item"].iloc[0]
   # --------------------------------------
   
   # return expected dataset
-  return results_pd[ ['ds', 'store', 'item', 'y', 'yhat', 'yhat_upper', 'yhat_lower'] ]  
+  return results_pd[["ds", "store", "item", "y", "yhat", "yhat_upper", "yhat_lower"]]  
 
 # COMMAND ----------
 
@@ -396,14 +397,12 @@ def forecast_store_item( history_pd: pd.DataFrame ) -> pd.DataFrame:
 # DBTITLE 1,Apply Forecast Function to Each Store-Item Combination
 from pyspark.sql import functions
 
-results = (
-  store_item_history
-    .groupBy('store', 'item')
-      .applyInPandas(forecast_store_item, schema=result_schema)
-    .withColumn('training_date', functions.current_date() )
-    )
+results = store_item_history \
+  .groupBy("store", "item") \
+  .applyInPandas(forecast_store_item, schema=result_schema) \
+  .withColumn("training_date", functions.current_date())
 
-results.createOrReplaceTempView('new_forecasts')
+results.createOrReplaceTempView("new_forecasts")
 
 display(results)
 
@@ -415,6 +414,7 @@ display(results)
 
 # DBTITLE 1,Persist Forecast Output
 # MAGIC %sql
+# MAGIC
 # MAGIC -- create forecast table
 # MAGIC create table if not exists forecasts (
 # MAGIC   date date,
@@ -425,7 +425,7 @@ display(results)
 # MAGIC   sales_predicted_upper float,
 # MAGIC   sales_predicted_lower float,
 # MAGIC   training_date date
-# MAGIC   )
+# MAGIC )
 # MAGIC using delta
 # MAGIC partitioned by (date);
 # MAGIC
@@ -441,22 +441,26 @@ display(results)
 # MAGIC   f.sales_predicted_upper = n.yhat_upper,
 # MAGIC   f.sales_predicted_lower = n.yhat_lower,
 # MAGIC   f.training_date = n.training_date
-# MAGIC when not matched then insert (date,
+# MAGIC when not matched then insert (
+# MAGIC   date,
 # MAGIC   store,
 # MAGIC   item,
 # MAGIC   sales,
 # MAGIC   sales_predicted,
 # MAGIC   sales_predicted_upper,
 # MAGIC   sales_predicted_lower,
-# MAGIC   training_date)
-# MAGIC values (n.ds,
+# MAGIC   training_date
+# MAGIC )
+# MAGIC values (
+# MAGIC   n.ds,
 # MAGIC   n.store,
 # MAGIC   n.item,
 # MAGIC   n.y,
 # MAGIC   n.yhat,
 # MAGIC   n.yhat_upper,
 # MAGIC   n.yhat_lower,
-# MAGIC   n.training_date)
+# MAGIC   n.training_date
+# MAGIC )
 
 # COMMAND ----------
 
@@ -467,42 +471,48 @@ display(results)
 # DBTITLE 1,Apply Same Techniques to Evaluate Each Forecast
 # schema of expected result set
 eval_schema = types.StructType([
-  types.StructField('training_date', types.DateType()),
-  types.StructField('store', types.IntegerType()),
-  types.StructField('item', types.IntegerType()),
-  types.StructField('mae', types.FloatType()),
-  types.StructField('mse', types.FloatType()),
-  types.StructField('rmse', types.FloatType())
+  types.StructField("training_date", types.DateType()),
+  types.StructField("store", types.IntegerType()),
+  types.StructField("item", types.IntegerType()),
+  types.StructField("mae", types.FloatType()),
+  types.StructField("mse", types.FloatType()),
+  types.StructField("rmse", types.FloatType())
 ])
 
 # define function to calculate metrics
-def evaluate_forecast( evaluation_pd: pd.DataFrame ) -> pd.DataFrame:
+def evaluate_forecast(evaluation_pd: pd.DataFrame) -> pd.DataFrame:
   
   # get store & item in incoming data set
-  training_date = evaluation_pd['training_date'].iloc[0]
-  store = evaluation_pd['store'].iloc[0]
-  item = evaluation_pd['item'].iloc[0]
+  training_date = evaluation_pd["training_date"].iloc[0]
+  store = evaluation_pd["store"].iloc[0]
+  item = evaluation_pd["item"].iloc[0]
   
   # calculate evaluation metrics
-  mae = mean_absolute_error( evaluation_pd['y'], evaluation_pd['yhat'] )
-  mse = mean_squared_error( evaluation_pd['y'], evaluation_pd['yhat'] )
-  rmse = sqrt( mse )
+  mae = metrics.mean_absolute_error(evaluation_pd["y"], evaluation_pd["yhat"])
+  mse = metrics.mean_squared_error(evaluation_pd["y"], evaluation_pd["yhat"])
+  rmse = math.sqrt(mse)
   
   # assemble result set
-  results = {'training_date':[training_date], 'store':[store], 'item':[item], 'mae':[mae], 'mse':[mse], 'rmse':[rmse]}
-  return pd.DataFrame.from_dict( results )
+  results = {
+    "training_date": [training_date],
+    "store": [store],
+    "item": [item],
+    "mae": [mae],
+    "mse": [mse],
+    "rmse": [rmse]
+  }
+  return pd.DataFrame.from_dict(results)
 
 # calculate metrics
-results = (
-  spark
-    .table('new_forecasts')
-    .filter('ds < \'2018-01-01\'') # limit evaluation to periods where we have historical data
-    .select('training_date', 'store', 'item', 'y', 'yhat')
-    .groupBy('training_date', 'store', 'item')
-    .applyInPandas(evaluate_forecast, schema=eval_schema)
-    )
+# - filter() limits evaluation to periods where we have historical data
+results = spark \
+  .table("new_forecasts") \
+  .filter(functions.col("ds") < "2018-01-01") \
+  .select("training_date", "store", "item", "y", "yhat") \
+  .groupBy("training_date", "store", "item") \
+  .applyInPandas(evaluate_forecast, schema=eval_schema)
 
-results.createOrReplaceTempView('new_forecast_evals')
+results.createOrReplaceTempView("new_forecast_evals")
 
 # COMMAND ----------
 
@@ -520,7 +530,7 @@ results.createOrReplaceTempView('new_forecast_evals')
 # MAGIC   mse float,
 # MAGIC   rmse float,
 # MAGIC   training_date date
-# MAGIC   )
+# MAGIC )
 # MAGIC using delta
 # MAGIC partitioned by (training_date);
 # MAGIC
