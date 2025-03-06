@@ -43,14 +43,14 @@ import shutil
 from sklearn import metrics
 
 # constant values
-catalog = "fine_grained_df_dev"
-landing_file_path = f"/Volumes/{catalog}/landing/blob_storage/kaggle/train.csv"
-bronze_table = f"{catalog}.bronze.kaggle_train"
+catalog = "fgdf_accelerator_dev"
+bronze_file_path = f"/Volumes/{catalog}/bronze/kaggle/train.csv"
+temporary_training_view = "tmp_kaggle_train"
 silver_table = f"{catalog}.silver.store_item_history"
 
 # COMMAND ----------
 
-# DBTITLE 1,Ingest data from the Landing Zone (CSV) into a Bronze Table
+# DBTITLE 1,Ingest Data from the Bronze File (CSV) into a Temp View
 # structure of the training data set
 train_schema = types.StructType([
   types.StructField("date", types.DateType()),
@@ -61,7 +61,7 @@ train_schema = types.StructType([
 
 # read the training file into a dataframe
 train_df = spark.read.csv(
-  landing_file_path, 
+  bronze_file_path, 
   schema=train_schema,
   header=True
 )
@@ -69,11 +69,8 @@ train_df = spark.read.csv(
 # show data
 display(train_df)
 
-# write the training dataframe into a delta table
-train_df.write \
-  .mode("overwrite") \
-  .option("overwriteSchema", "true") \
-  .saveAsTable(bronze_table)
+# make the dataframe queryable as a temporary view
+train_df.createOrReplaceTempView(temporary_training_view)
 
 # COMMAND ----------
 
@@ -85,10 +82,10 @@ train_df.write \
 # MAGIC %sql
 # MAGIC
 # MAGIC SELECT
-# MAGIC   year(date) as year, 
-# MAGIC   sum(sales) as sales
-# MAGIC FROM `fine_grained_df_dev`.`bronze`.`kaggle_train`
-# MAGIC GROUP BY year(date)
+# MAGIC   YEAR(date) AS year, 
+# MAGIC   SUM(sales) AS sales
+# MAGIC FROM tmp_kaggle_train
+# MAGIC GROUP BY YEAR(date)
 # MAGIC ORDER BY year;
 
 # COMMAND ----------
@@ -103,9 +100,9 @@ train_df.write \
 # MAGIC %sql
 # MAGIC
 # MAGIC SELECT 
-# MAGIC   TRUNC(date, 'MM') as month,
-# MAGIC   SUM(sales) as sales
-# MAGIC FROM `fine_grained_df_dev`.`bronze`.`kaggle_train`
+# MAGIC   TRUNC(date, 'MM') AS month,
+# MAGIC   SUM(sales) AS sales
+# MAGIC FROM tmp_kaggle_train
 # MAGIC GROUP BY TRUNC(date, 'MM')
 # MAGIC ORDER BY month;
 
@@ -121,7 +118,7 @@ train_df.write \
 # MAGIC %sql
 # MAGIC
 # MAGIC SELECT
-# MAGIC   YEAR(date) as year,
+# MAGIC   YEAR(date) AS year,
 # MAGIC   (
 # MAGIC     CASE
 # MAGIC       WHEN DATE_FORMAT(date, 'E') = 'Sun' THEN 0
@@ -132,13 +129,13 @@ train_df.write \
 # MAGIC       WHEN DATE_FORMAT(date, 'E') = 'Fri' THEN 5
 # MAGIC       WHEN DATE_FORMAT(date, 'E') = 'Sat' THEN 6
 # MAGIC     END
-# MAGIC   ) % 7 as weekday,
-# MAGIC   AVG(sales) as sales
+# MAGIC   ) % 7 AS weekday,
+# MAGIC   AVG(sales) AS sales
 # MAGIC FROM (
 # MAGIC   SELECT 
 # MAGIC     date,
-# MAGIC     SUM(sales) as sales
-# MAGIC   FROM `fine_grained_df_dev`.`bronze`.`kaggle_train`
+# MAGIC     SUM(sales) AS sales
+# MAGIC   FROM tmp_kaggle_train
 # MAGIC   GROUP BY date
 # MAGIC ) x
 # MAGIC GROUP BY year, weekday
@@ -163,9 +160,9 @@ train_df.write \
 # For prophet, the dataframe must have columns "ds" and "y" with the dates and values respectively.
 sql_statement = f"""
   SELECT
-    date as ds,
-    sales as y
-  FROM {bronze_table}
+    date AS ds,
+    sales AS y
+  FROM {temporary_training_view}
   WHERE store = 1 AND item = 1
   ORDER BY ds
 """
@@ -296,8 +293,8 @@ sql_statement = f"""
     store,
     item,
     date,
-    SUM(sales) as sales
-  FROM {bronze_table}
+    SUM(sales) AS sales
+  FROM {temporary_training_view}
   GROUP BY store, item, date
   ORDER BY store, item, date
 """
@@ -316,8 +313,8 @@ sql_statement = f"""
   SELECT
     store,
     item,
-    date as ds,
-    sales as y
+    date AS ds,
+    sales AS y
   FROM {silver_table}
 """
 
@@ -422,25 +419,42 @@ results = store_item_history \
   .applyInPandas(forecast_store_item, schema=result_schema) \
   .withColumn("training_date", functions.current_date())
 
-results.createOrReplaceTempView("new_forecasts")
+results.createOrReplaceTempView("tmp_new_forecasts")
 
 display(results)
 
 # COMMAND ----------
 
-# MAGIC %md We we are likely wanting to report on our forecasts, so let's save them to a queryable table structure:
+# MAGIC %md We we are likely wanting to report on our forecasts, so let's save them to a queryable table structure in the data lake gold layer:
+
+# COMMAND ----------
+
+# DBTITLE 1,Create the `forecast` Table
+# MAGIC %sql
+# MAGIC
+# MAGIC CREATE TABLE IF NOT EXISTS `fgdf_accelerator_dev`.`gold`.`store_item_forecasts` (
+# MAGIC   date DATE,
+# MAGIC   store INTEGER,
+# MAGIC   item INTEGER,
+# MAGIC   sales DECIMAL(25, 18),
+# MAGIC   sales_predicted DECIMAL(25, 18),
+# MAGIC   sales_predicted_upper DECIMAL(25, 18),
+# MAGIC   sales_predicted_lower DECIMAL(25, 18),
+# MAGIC   training_date DATE
+# MAGIC )
+# MAGIC USING delta
+# MAGIC PARTITIONED BY (date);
 
 # COMMAND ----------
 
 # DBTITLE 1,Persist Forecast Output
 # MAGIC %sql
 # MAGIC
-# MAGIC -- The store_item_forecasts table is created by Terraform.
-# MAGIC -- Load data to it.
-# MAGIC merge into `fine_grained_df_dev`.`gold`.`store_item_forecasts` f
-# MAGIC using new_forecasts n 
-# MAGIC on f.date = n.ds and f.store = n.store and f.item = n.item
-# MAGIC when matched then update set f.date = n.ds,
+# MAGIC -- load data to the forecast table.
+# MAGIC MERGE INTO `fgdf_accelerator_dev`.`gold`.`store_item_forecasts` f
+# MAGIC USING tmp_new_forecasts n 
+# MAGIC ON f.date = n.ds AND f.store = n.store AND f.item = n.item
+# MAGIC WHEN MATCHED THEN UPDATE SET f.date = n.ds,
 # MAGIC   f.store = n.store,
 # MAGIC   f.item = n.item,
 # MAGIC   f.sales = n.y,
@@ -448,7 +462,7 @@ display(results)
 # MAGIC   f.sales_predicted_upper = n.yhat_upper,
 # MAGIC   f.sales_predicted_lower = n.yhat_lower,
 # MAGIC   f.training_date = n.training_date
-# MAGIC when not matched then insert (
+# MAGIC WHEN NOT MATCHED THEN INSERT (
 # MAGIC   date,
 # MAGIC   store,
 # MAGIC   item,
@@ -458,7 +472,7 @@ display(results)
 # MAGIC   sales_predicted_lower,
 # MAGIC   training_date
 # MAGIC )
-# MAGIC values (
+# MAGIC VALUES (
 # MAGIC   n.ds,
 # MAGIC   n.store,
 # MAGIC   n.item,
@@ -513,13 +527,13 @@ def evaluate_forecast(evaluation_pd: pd.DataFrame) -> pd.DataFrame:
 # calculate metrics
 # - filter() limits evaluation to periods where we have historical data
 results = spark \
-  .table("new_forecasts") \
+  .table("tmp_new_forecasts") \
   .filter(functions.col("ds") < "2018-01-01") \
   .select("training_date", "store", "item", "y", "yhat") \
   .groupBy("training_date", "store", "item") \
   .applyInPandas(evaluate_forecast, schema=eval_schema)
 
-results.createOrReplaceTempView("new_forecast_evals")
+results.createOrReplaceTempView("tmp_new_forecast_evals")
 
 # COMMAND ----------
 
@@ -527,20 +541,34 @@ results.createOrReplaceTempView("new_forecast_evals")
 
 # COMMAND ----------
 
+# MAGIC %sql
+# MAGIC
+# MAGIC CREATE TABLE IF NOT EXISTS `fgdf_accelerator_dev`.`gold`.`store_item_forecast_evals` (
+# MAGIC   store INTEGER,
+# MAGIC   item INTEGER,
+# MAGIC   mae DECIMAL(25, 18),
+# MAGIC   mse DECIMAL(25, 18),
+# MAGIC   rmse DECIMAL(25, 18),
+# MAGIC   training_date DATE
+# MAGIC )
+# MAGIC USING delta
+# MAGIC PARTITIONED BY (training_date);
+
+# COMMAND ----------
+
 # DBTITLE 1,Persist Evaluation Metrics
 # MAGIC %sql
 # MAGIC
-# MAGIC -- The store_item_forecast_evals table is created by Terraform.
-# MAGIC -- Load data to it.
-# MAGIC insert into `fine_grained_df_dev`.`gold`.`store_item_forecast_evals`
-# MAGIC select
+# MAGIC -- load data to it.
+# MAGIC INSERT INTO `fgdf_accelerator_dev`.`gold`.`store_item_forecast_evals`
+# MAGIC SELECT
 # MAGIC   store,
 # MAGIC   item,
 # MAGIC   mae,
 # MAGIC   mse,
 # MAGIC   rmse,
 # MAGIC   training_date
-# MAGIC from new_forecast_evals;
+# MAGIC FROM tmp_new_forecast_evals;
 
 # COMMAND ----------
 
@@ -558,11 +586,11 @@ results.createOrReplaceTempView("new_forecast_evals")
 # MAGIC   sales_predicted,
 # MAGIC   sales_predicted_upper,
 # MAGIC   sales_predicted_lower
-# MAGIC FROM `fine_grained_df_dev`.`gold`.`store_item_forecasts` a
+# MAGIC FROM `fgdf_accelerator_dev`.`gold`.`store_item_forecasts` a
 # MAGIC WHERE item = 1 AND
 # MAGIC       store IN (1, 2, 3) AND
 # MAGIC       date >= '2018-01-01' AND
-# MAGIC       training_date=current_date()
+# MAGIC       training_date=CURRENT_DATE()
 # MAGIC ORDER BY store, date, item
 
 # COMMAND ----------
@@ -579,7 +607,7 @@ results.createOrReplaceTempView("new_forecast_evals")
 # MAGIC   mae,
 # MAGIC   mse,
 # MAGIC   rmse
-# MAGIC FROM `fine_grained_df_dev`.`gold`.`store_item_forecast_evals` a
+# MAGIC FROM `fgdf_accelerator_dev`.`gold`.`store_item_forecast_evals` a
 # MAGIC WHERE item = 1 AND
-# MAGIC       training_date=current_date()
+# MAGIC       training_date=CURRENT_DATE()
 # MAGIC ORDER BY store
